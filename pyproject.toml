@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lighting-tools"
+version = "0.1.0"
+description = "Modular pipeline for lighting fixture detection and relighting"
+authors = [{name="Your Name", email="you@example.com"}]
+dependencies = [
+  "torch>=2.1",
+  "transformers>=4.40",
+  "opencv-python",
+  "pillow",
+  "replicate",
+]
+requires-python = ">=3.9"
