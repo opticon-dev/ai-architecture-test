@@ -1,2 +1,2 @@
 from .detection import *
-from .replicate import *
+from .image_test import *
