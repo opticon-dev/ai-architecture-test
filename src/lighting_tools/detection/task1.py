@@ -89,8 +89,8 @@ class Manifest:
 class KeywordMaskDetector:
     def __init__(self, input_img, output_dir):
         self.input_img = input_img
-        os.makedirs(self.output_dir, exist_ok=True)
         self.output_dir = output_dir
+        os.makedirs(self.output_dir, exist_ok=True)
 
     def process(self, searching_labels):
         mask_result: Manifest = self._create_target_masks(searching_labels)
@@ -338,4 +338,4 @@ if __name__ == "__main__":
     # 필요 시 Google Drive에서 수동으로 다운 → INPUT_IMG 경로로 지정
     # 또는 requests/urllib로 다운로드 후 파일로 저장한 뒤 사용.
 
-    manifest = KeywordMaskDetector(INPUT_IMG, BASE_SAVE_DIR).create_target_masks()
+    manifest = KeywordMaskDetector(INPUT_IMG, BASE_SAVE_DIR).process(SEARCH_LABELS)
