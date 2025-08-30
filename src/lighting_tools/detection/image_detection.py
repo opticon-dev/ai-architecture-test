@@ -9,7 +9,6 @@ from PIL import Image
 import torch
 from transformers import pipeline, SamModel, SamProcessor
 
-
 """
 Zeroshot(OWL-ViT)로 조명 후보 bbox를 찾고,
 SAM으로 bbox를 정밀 마스크로 변환하여 crop/mask/manifest를 저장합니다.
@@ -93,14 +92,16 @@ class KeywordMaskDetector:
         os.makedirs(self.output_dir, exist_ok=True)
 
     def process(self, searching_labels):
-        mask_result: Manifest = self._create_target_masks(searching_labels)
+        mask_result: Manifest = self._create_target_masks(
+            searching_labels=searching_labels
+        )
 
         # 3) manifest 저장
         manifest_path = os.path.join(self.output_dir, "mask_result.json")
         mask_result.save(manifest_path)
-        print(f"Saved mask result to: {manifest_path} (fixtures={manifest.count})")
+        print(f"Saved mask result to: {manifest_path} ")
 
-        return manifest
+        return mask_result
 
     def _create_target_masks(
         self,
@@ -123,20 +124,27 @@ class KeywordMaskDetector:
         # 신뢰도/중복 제거(간단히 점수 기준만 적용)
 
         # 1) Zero-shot detection (OWL-ViT)
-        boxes = self._get_detected_boxes_ZEROSHOT(input_img_pil)
+        boxes = self._get_detected_boxes_ZEROSHOT(
+            input_img_pil, searching_labels, score_thresh
+        )
 
+        print(f"{len(boxes)} boxes are created")
+        boxes_filtered = self._filter_boxes(boxes)
+        print(f"boxes are filtered {len(boxes)} > {len(boxes_filtered)} ")
         manifest = Manifest(self.input_img, searching_labels)
 
         # 2) bbox → SAM 마스크 → crop/mask 저장
-        for i, box_info in enumerate(boxes, start=1):
-            bbox_expanded, crop_image, mask_image = self._create_crop_and_mask(box_info)
+        for i, box_info in enumerate(boxes_filtered, start=1):
+            bbox_expanded, crop_image, mask_image = self._create_crop_and_mask(
+                box_info, sam_pad, input_img_pil
+            )
 
             crop_path = os.path.join(self.output_dir, f"light_{i:02d}_crop.png")
             crop_image.save(crop_path)
 
             mask_path = os.path.join(self.output_dir, f"light_{i:02d}_mask.png")
             mask_image.save(mask_path)
-
+            print(f"SAVE MASK AND CROP : {crop_path}, {mask_path}")
             manifest.add_mask(
                 MaskItem(
                     id=i,
@@ -148,6 +156,77 @@ class KeywordMaskDetector:
                 )
             )
         return manifest
+
+    def _filter_boxes(self, boxes):
+        """
+        boxes: [{"bbox": [x1,y1,x2,y2], "score": float, ...}, ...]
+        겹치는 bbox들끼리 그룹핑 후, 각 그룹에서 가장 큰 bbox만 남겨 반환.
+        """
+
+        def get_bbox_from_box_info(b):
+            return tuple(map(int, b["bbox"]))
+
+        def normalize_bbox(b):
+            x1, y1, x2, y2 = b
+            return (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+
+        def area(b):
+            x1, y1, x2, y2 = b
+            return max(0, x2 - x1) * max(0, y2 - y1)
+
+        def is_bbox_intersected(b1, b2):
+            x1, y1, x2, y2 = b1
+            x3, y3, x4, y4 = b2
+            # 한쪽이 다른 쪽의 좌/우 바깥에 완전히 있는 경우
+            if x2 < x3 or x4 < x1:
+                return False
+            # 한쪽이 다른 쪽의 위/아래 바깥에 완전히 있는 경우
+            if y2 < y3 or y4 < y1:
+                return False
+            return True  # 접촉(x2==x3 등)도 교차로 간주
+
+        if not boxes:
+            return []
+
+        # 1) bbox 정규화 및 캐싱
+        bboxes = [normalize_bbox(get_bbox_from_box_info(b)) for b in boxes]
+        n = len(boxes)
+
+        # 2) 교차 그래프 구성 (O(n^2))
+        adj = [[] for _ in range(n)]
+        for i in range(n):
+            for j in range(i + 1, n):
+                if is_bbox_intersected(bboxes[i], bboxes[j]):
+                    adj[i].append(j)
+                    adj[j].append(i)
+
+        # 3) 연결요소 탐색 후, 각 컴포넌트에서 최대 박스 선택
+        visited = [False] * n
+        keep_indices = []
+
+        for i in range(n):
+            if visited[i]:
+                continue
+            # DFS로 컴포넌트 수집
+            stack = [i]
+            visited[i] = True
+            comp = []
+            while stack:
+                u = stack.pop()
+                comp.append(u)
+                for v in adj[u]:
+                    if not visited[v]:
+                        visited[v] = True
+                        stack.append(v)
+
+            # comp에서 가장 큰 bbox 선택 (면적, 동률이면 score)
+            best_idx = max(
+                comp, key=lambda k: (area(bboxes[k]), boxes[k].get("score", 0.0))
+            )
+            keep_indices.append(best_idx)
+
+        # 4) 선택된 박스만 반환 (원본 dict 유지)
+        return [boxes[i] for i in sorted(keep_indices)]
 
     def _create_crop_and_mask(self, box_info, sam_pad, input_img_pil):
         np_image = np.array(input_img_pil)  # (H, W, 3)
@@ -291,18 +370,6 @@ class KeywordMaskDetector:
     # 파이프라인
     # ---------------------------
 
-    SEARCHING_LABELS: List[str] = [
-        "ceiling downlight",
-        "recessed downlight",
-        "pendant light",
-        "chandelier",
-        "wall sconce",
-        "floor lamp",
-        "table lamp",
-        "strip light",
-        "cove light",
-    ]
-
     def _extract_xyxy(self, box_dict: Dict[str, float]) -> BBox:
         """
         OWL-ViT의 box dict에서 안전하게 (x1,y1,x2,y2)를 뽑아냄.
@@ -324,18 +391,3 @@ class KeywordMaskDetector:
             return (x1, y1, x2, y2)
 
         raise ValueError(f"Unexpected box format: {box_dict}")
-
-
-# ---------------------------
-# 예시 실행 (직접 경로 지정)
-# ---------------------------
-
-if __name__ == "__main__":
-    # 예시 입력 (로컬 파일 경로를 사용하세요. Google Drive URL은 PIL에서 직접 열 수 없습니다.)
-    INPUT_IMG = "mid-century-modern-living-room.jpg"  # 예: 로컬에 다운로드해두기
-    BASE_SAVE_DIR = "./outputs"
-
-    # 필요 시 Google Drive에서 수동으로 다운 → INPUT_IMG 경로로 지정
-    # 또는 requests/urllib로 다운로드 후 파일로 저장한 뒤 사용.
-
-    manifest = KeywordMaskDetector(INPUT_IMG, BASE_SAVE_DIR).process(SEARCH_LABELS)
