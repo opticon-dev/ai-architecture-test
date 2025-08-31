@@ -1,2 +1,2 @@
-from .image_detection import *
-from .create_partial_var import *
+from .image_detector import *
+from .vari_maker import *

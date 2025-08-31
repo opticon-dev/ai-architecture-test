@@ -110,17 +110,6 @@ class CombineImage:
                 # img = apply_patch_poisson(img, patch, mask, (x1,y1,x2,y2))
                 img = self.apply_patch_rgb_alpha(img, patch, mask, (x1, y1, x2, y2))
 
-            # # (선택) Halo/Glow: on일 때만 주변을 살짝 밝게
-            # if halo and (fix["id"] in selected_on_ids):
-            #     halo_mask = cv2.GaussianBlur(mask, (0,0), 6.0) / 255.0
-            #     L = lab_L(img)
-            #     roi = L[y1:y2, x1:x2]
-            #     roi2 = np.clip(roi + 10.0*halo_mask, 0, 255)  # 강도 조정
-            #     L[y1:y2, x1:x2] = roi2
-            #     lab = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2LAB).astype(np.float32)
-            #     lab[...,0] = L
-            #     img = Image.fromarray(cv2.cvtColor(lab.astype(np.uint8), cv2.COLOR_LAB2RGB))
-
         return img
 
     #     return img, patch
